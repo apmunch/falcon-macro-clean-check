@@ -263,18 +263,6 @@ the direct CID only.
 | Setting shows as `NOT FOUND` | Policy template predates this control, or the setting ID differs; open an issue |
 | `FAILED: HTTP 403` on PATCH | Client lacks **Prevention Policies: Write** scope |
 | GovCloud / EU / US-2 tenant errors | Set `FALCON_BASE_URL` in `.env` to the correct regional endpoint |
-
----
-
-## Notes
-
-- The script matches the macro removal setting by known API IDs
-  (`SuspiciousMacroRemoval`, `OfficeMacroRemoval`,
-  `MicrosoftOfficeSuspiciousMacroRemoval`) and falls back to a name-substring
-  search (`"macro"` + `"removal"`) to handle any minor naming variation between
-  Falcon versions.
-- All API calls are retried up to three times with exponential back-off on HTTP
-  429 (rate limit) responses.
 - The disable step requires explicit confirmation before any change is applied.
 - No credentials are written to disk by this script; `.env` handling is
   read-only at startup.

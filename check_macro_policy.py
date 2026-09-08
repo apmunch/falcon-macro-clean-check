@@ -189,8 +189,6 @@ def get_child_cids(base_url: str, token: str) -> list:
 
     resp = _request("GET", f"{base_url}{MSSP_QUERY_PATH}", headers=headers, params={"limit": 5000})
 
-    if resp.status_code in (400, 403, 404):
-        return []
     if resp.status_code != 200:
         return []
 
@@ -272,12 +270,12 @@ def fetch_windows_policies(base_url: str, token: str) -> Optional[list]:
         )
 
         if resp.status_code >= 400:
+            if resp.status_code == 403:
+                return None
             try:
                 msg = _extract_errors(resp.json()) or resp.text
             except Exception:
                 msg = resp.text
-            if resp.status_code == 403:
-                return None
             print(f"{_RE}ERROR:{_R} Failed to fetch policies (HTTP {resp.status_code}): {msg}")
             sys.exit(1)
 
@@ -367,8 +365,12 @@ def render_plain(report: list, header: str = "") -> str:
     lines.append(f"Windows prevention polic{'y' if len(report) == 1 else 'ies'} found: {len(report)}\n")
 
     for r in report:
-        p_status = "ENABLED" if r["policy_enabled"] else "DISABLED"
-        p_color  = _YE if r["policy_enabled"] else _GR
+        if r["policy_enabled"] is True:
+            p_status, p_color = "ENABLED", _YE
+        elif r["policy_enabled"] is False:
+            p_status, p_color = "DISABLED", _GR
+        else:
+            p_status, p_color = "UNKNOWN", _YE
         lines.append(f'  Policy : {_B}"{r["policy_name"]}"{_R}')
         lines.append(f'  ID     : {r["policy_id"]}  |  Policy: {p_color}{p_status}{_R}')
 

@@ -8,7 +8,9 @@ for multi-CID environments and can optionally disable the setting via the API.
 """
 
 import argparse
+import base64
 import csv
+from datetime import datetime
 import json
 import os
 import re
@@ -652,6 +654,18 @@ def prompt_disable(
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def _cid_from_token(token: str) -> Optional[str]:
+    """Decode the CID from a Falcon OAuth2 JWT without a network call."""
+    try:
+        payload_b64 = token.split(".")[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)
+        payload = json.loads(base64.b64decode(payload_b64).decode())
+        sub = payload.get("sub", "")
+        return sub.split(":")[0] if ":" in sub else (payload.get("cid") or None)
+    except Exception:
+        return None
+
+
 def select_base_url() -> str:
     """Interactively prompt the user to choose a Falcon API region."""
     print("\n" + _CY + "=" * 62 + _R)
@@ -685,6 +699,7 @@ def main() -> None:
 
     print(f"\n{_B}[1/5]{_R} Authenticating...")
     token = get_token(base_url, client_id, client_secret)
+    parent_cid = _cid_from_token(token)
     print(f"      {_GR}OK{_R}")
 
     print(f"\n{_B}[2/5]{_R} Checking for Flight Control child CIDs...")
@@ -707,7 +722,10 @@ def main() -> None:
     all_results: list = []
 
     for member_cid in selected_cids:
-        display_label = f"CID: {member_cid}" if member_cid else "Parent / Direct CID"
+        if member_cid:
+            display_label = f"CID: {member_cid}"
+        else:
+            display_label = f"Parent / Direct CID ({parent_cid})" if parent_cid else "Parent / Direct CID"
 
         if member_cid:
             cid_token = get_token(base_url, client_id, client_secret, member_cid=member_cid)
@@ -741,8 +759,11 @@ def main() -> None:
     if args.csv:
         export_csv(all_results, args.csv)
     elif not args.no_interactive:
-        print("\nExport results to CSV? Enter a filename, or press Enter to skip:")
-        csv_path = input("  Filename > ").strip()
+        default_filename = datetime.now().strftime("falcon_macro_%Y%m%d_%H%M%S.csv")
+        print(f"\nExport results to CSV? Enter a filename, or press Enter to skip:")
+        csv_path = input(f"  Filename [{default_filename}] > ").strip()
+        if csv_path == "":
+            csv_path = default_filename
         if csv_path:
             export_csv(all_results, csv_path)
 

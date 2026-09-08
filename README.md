@@ -267,7 +267,7 @@ Enter policy numbers to DISABLE (comma-separated, e.g. '1,3'),
 CHANGES TO BE MADE
 ==============================================================
 
-  Parent / Direct CID  —  1 policy to disable
+  Parent / Direct CID  —  1 policy to modify
     • "Corporate Windows Baseline" [aaa111...]
 
   Type 'yes' or 'y' to apply all changes, anything else to cancel: yes

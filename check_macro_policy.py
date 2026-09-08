@@ -592,7 +592,7 @@ def prompt_disable(
     print(_CY + "=" * 62 + _R)
     for cid_key, cid_policies in by_cid.items():
         cid_label = cid_key if cid_key else "Parent / Direct CID"
-        print(f"\n  {_B}{cid_label}{_R}  —  {len(cid_policies)} polic{'y' if len(cid_policies) == 1 else 'ies'} to disable")
+        print(f"\n  {_B}{cid_label}{_R}  —  {len(cid_policies)} polic{'y' if len(cid_policies) == 1 else 'ies'} to modify")
         for r in cid_policies:
             print(f"    • \"{r['policy_name']}\" [{r['policy_id']}]")
     print()

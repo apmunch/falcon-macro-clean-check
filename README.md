@@ -10,16 +10,22 @@ on selected policies via the API.
 
 ## What the Script Does
 
-1. **Authenticates** to the CrowdStrike Falcon API using OAuth2 client credentials.
-2. **Enumerates CIDs** — queries for Flight Control child CIDs and prompts you to
+1. **Selects the API region** — if `FALCON_BASE_URL` is not set in the environment,
+   presents a numbered menu of known regional endpoints (US-1, US-2, EU-1, US-GOV-1)
+   so you can choose before connecting. Setting `FALCON_BASE_URL` in `.env` skips
+   this prompt.
+2. **Authenticates** to the CrowdStrike Falcon API using OAuth2 client credentials.
+3. **Enumerates CIDs** — queries for Flight Control child CIDs and prompts you to
    select which CIDs to operate on (parent only, a subset, or all).
-3. **Fetches Windows prevention policies** for each selected CID (pagination is
-   handled automatically).
-4. **Searches** each policy's settings for the macro removal toggle and reports its
+4. **Fetches Windows prevention policies** for each selected CID (pagination is
+   handled automatically). CIDs where the API client lacks access are skipped with
+   a warning rather than aborting the run.
+5. **Searches** each policy's settings for the macro removal toggle and reports its
    current enabled/disabled state in the terminal.
-5. **Optionally exports** all results to a CSV file.
-6. **Prompts you to disable** the setting on any policies where it is currently
-   enabled, confirming before any change is made.
+6. **Optionally exports** all results to a CSV file.
+7. **Prompts you to disable** the setting on any policies where it is currently
+   enabled, confirming before any change is made. Policies owned by a parent CID
+   are automatically patched using a parent-scoped token.
 
 ---
 
@@ -82,7 +88,7 @@ following scopes:
 | Scope | Access | Required For |
 |---|---|---|
 | Prevention Policies | **Read** | Reading policy settings |
-| Prevention Policies | **Write** | Disabling the setting (step 5) |
+| Prevention Policies | **Write** | Disabling the setting (optional) |
 | Flight Control (MSSP) | **Read** | Enumerating child CIDs — multi-CID only |
 
 > **Note:** Flight Control scope is optional. If absent, the script operates on
@@ -112,10 +118,12 @@ Edit `.env` and fill in your values:
 ```dotenv
 FALCON_CLIENT_ID=abc123...
 FALCON_CLIENT_SECRET=xyz789...
-# FALCON_BASE_URL=https://api.crowdstrike.com
+# FALCON_BASE_URL=https://api.crowdstrike.com  # optional — set to skip the interactive region prompt
 ```
 
 The script loads `.env` automatically if `python-dotenv` is installed.
+If `FALCON_BASE_URL` is omitted, the script prompts you to choose a region
+(US-1, US-2, EU-1, or US-GOV-1) at startup each time it runs.
 Alternatively, export the variables in your shell before running:
 
 ```bash
@@ -135,11 +143,12 @@ python check_macro_policy.py
 
 The script walks you through each step interactively:
 
-1. Authenticates and checks for Flight Control child CIDs.
-2. Displays available CIDs and prompts for a selection.
-3. Fetches and displays Windows prevention policies for each selected CID.
-4. Asks whether to export results to a CSV file.
-5. Lists policies with macro removal **ENABLED** and offers to disable them.
+1. Prompts you to select an API region (skipped if `FALCON_BASE_URL` is set).
+2. Authenticates and checks for Flight Control child CIDs.
+3. Displays available CIDs and prompts for a selection.
+4. Fetches policies for each selected CID and automatically prints a per-CID summary (total, needs disabling, already disabled, not found).
+5. Asks whether to export results to a CSV file.
+6. Lists policies with macro removal **ENABLED**, shows a per-CID breakdown of what will be changed, and asks for a final confirmation before applying any modifications.
 
 ### Non-interactive mode (automation / CI)
 
@@ -187,43 +196,85 @@ python check_macro_policy.py --no-interactive --output json
 CrowdStrike Falcon — Microsoft Office Macro Removal Policy Check
 ==============================================================
 
-[1/4] Authenticating...
+==============================================================
+SELECT API REGION
+==============================================================
+  [1]  US-1 (default)       https://api.crowdstrike.com
+  [2]  US-2                 https://api.us-2.crowdstrike.com
+  [3]  EU-1                 https://api.eu-1.crowdstrike.com
+  [4]  US-GOV-1             https://api.laggar.gcw.crowdstrike.com
+
+  Selection (default: 1) > 1
+
+[1/5] Authenticating...
       OK
 
-[2/4] Checking for Flight Control child CIDs...
+[2/5] Checking for Flight Control child CIDs...
       Found 2 child CID(s).
 
-STEP 1 — SELECT CIDs TO ENUMERATE
+==============================================================
+SELECT CIDs TO CHECK
 ==============================================================
   [  0]  Parent / Direct CID
   [  1]  Acme Corp — Production          abc123456789abcd
   [  2]  Acme Corp — Dev/Test            def987654321efgh
 
-Enter CID numbers to check (comma-separated), 'all', or '0':
+Enter CID numbers to check (comma-separated, e.g. '0,2,5'),
+'all' for every CID, or '0' for the parent only:
   Selection > all
 
-[3/4] Enumerating Windows prevention policies across 3 CID(s)...
+[3/5] Enumerating Windows prevention policies across 3 CID(s)...
   Fetching policies for Parent / Direct CID... found 1 policy.
 
 ==============================================================
 Parent / Direct CID
 ==============================================================
-Windows prevention policies found: 1
-
-  Policy : "Corporate Windows Baseline"
-  ID     : aaa111...  |  Policy: ENABLED
-  Macro Removal (SuspiciousMacroRemoval): ENABLED
-
-  Summary: 1 ENABLED | 0 DISABLED | 0 NOT FOUND
+  Total policies          : 1
+  Needs disabling         : 1  (macro removal ENABLED)
+  OK (already disabled)   : 0
+  Setting not found       : 0  (policy predates this control — no action needed)
 
   Fetching policies for CID: abc123456789abcd... found 2 policies.
+
+==============================================================
+CID: abc123456789abcd
+==============================================================
+  Total policies          : 2
+  Needs disabling         : 0  (macro removal ENABLED)
+  OK (already disabled)   : 2
+  Setting not found       : 0  (policy predates this control — no action needed)
   ...
 
-[4/4] Export & optional modifications
+[4/5] Export results to CSV
 Export results to CSV? Enter a filename, or press Enter to skip:
   Filename > results.csv
 
 Results written to: results.csv
+
+[5/5] Disable macro removal on flagged policies
+
+==============================================================
+DISABLE MACRO REMOVAL
+  1 policy currently has the setting ENABLED:
+==============================================================
+  [  1]  "Corporate Windows Baseline" [aaa111...]
+
+Enter policy numbers to DISABLE (comma-separated, e.g. '1,3'),
+'all' to disable on all listed policies, or 'skip' to make no changes:
+  Selection > all
+
+==============================================================
+CHANGES TO BE MADE
+==============================================================
+
+  Parent / Direct CID  —  1 policy to disable
+    • "Corporate Windows Baseline" [aaa111...]
+
+  Type 'yes' or 'y' to apply all changes, anything else to cancel: yes
+
+  DISABLED (verified): "Corporate Windows Baseline"
+
+Done.
 ```
 
 ### CSV columns
@@ -262,7 +313,9 @@ the direct CID only.
 | `ERROR: Access denied (403)` | API client is missing a required scope |
 | Setting shows as `NOT FOUND` | Policy template predates this control, or the setting ID differs; open an issue |
 | `FAILED: HTTP 403` on PATCH | Client lacks **Prevention Policies: Write** scope |
-| GovCloud / EU / US-2 tenant errors | Set `FALCON_BASE_URL` in `.env` to the correct regional endpoint |
+| `Skipped — access denied (403)` on policy fetch | API client lacks **Prevention Policies: Read** scope for that CID |
+| `FAILED: Child CID tried to edit parent CID … policy` | The script retries automatically with a parent token; if it still fails, ensure the API client has **Prevention Policies: Write** scope on the parent CID |
+| GovCloud / EU / US-2 tenant errors | Select the correct region at the startup prompt, or set `FALCON_BASE_URL` in `.env` to skip the prompt |
 - The disable step requires explicit confirmation before any change is applied.
 - No credentials are written to disk by this script; `.env` handling is
   read-only at startup.

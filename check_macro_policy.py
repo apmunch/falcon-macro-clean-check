@@ -27,6 +27,13 @@ except ImportError:
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 DEFAULT_BASE_URL = "https://api.crowdstrike.com"
+
+KNOWN_ENDPOINTS = [
+    ("US-1 (default)", "https://api.crowdstrike.com"),
+    ("US-2",           "https://api.us-2.crowdstrike.com"),
+    ("EU-1",           "https://api.eu-1.crowdstrike.com"),
+    ("US-GOV-1",       "https://api.laggar.gcw.crowdstrike.com"),
+]
 TOKEN_PATH = "/oauth2/token"
 POLICY_COMBINED_PATH = "/policy/combined/prevention/v1"
 POLICY_ENTITIES_PATH = "/policy/entities/prevention/v1"
@@ -575,19 +582,25 @@ def prompt_disable(
         print("No valid selection. Skipped.")
         return
 
-    print(
-        f"\n{_YE}About to DISABLE macro removal on "
-        f"{len(selected)} polic{'y' if len(selected) == 1 else 'ies'}.{_R}"
-    )
-    confirm = input("  Type 'yes' or 'y' to confirm, anything else to cancel: ").strip().lower()
-    if confirm not in ("yes", "y"):
-        print("Cancelled — no changes made.")
-        return
-
     # Group by CID so we request one token per CID
     by_cid: dict = {}
     for r in selected:
         by_cid.setdefault(r.get("cid") or "", []).append(r)
+
+    print("\n" + _CY + "=" * 62 + _R)
+    print(_B + "CHANGES TO BE MADE" + _R)
+    print(_CY + "=" * 62 + _R)
+    for cid_key, cid_policies in by_cid.items():
+        cid_label = cid_key if cid_key else "Parent / Direct CID"
+        print(f"\n  {_B}{cid_label}{_R}  —  {len(cid_policies)} polic{'y' if len(cid_policies) == 1 else 'ies'} to disable")
+        for r in cid_policies:
+            print(f"    • \"{r['policy_name']}\" [{r['policy_id']}]")
+    print()
+
+    confirm = input(f"  {_YE}Type 'yes' or 'y' to apply all changes, anything else to cancel:{_R} ").strip().lower()
+    if confirm not in ("yes", "y"):
+        print("Cancelled — no changes made.")
+        return
 
     # Lazily obtained if a child policy turns out to be owned by the parent CID.
     parent_token: Optional[str] = None
@@ -634,6 +647,26 @@ def prompt_disable(
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def select_base_url() -> str:
+    """Interactively prompt the user to choose a Falcon API region."""
+    print("\n" + _CY + "=" * 62 + _R)
+    print(_B + "SELECT API REGION" + _R)
+    print(_CY + "=" * 62 + _R)
+    for i, (label, url) in enumerate(KNOWN_ENDPOINTS, 1):
+        print(f"  [{i}]  {label:<20} {url}")
+    choice = input("\n  Selection (default: 1) > ").strip()
+    if not choice:
+        return KNOWN_ENDPOINTS[0][1]
+    try:
+        idx = int(choice)
+        if 1 <= idx <= len(KNOWN_ENDPOINTS):
+            return KNOWN_ENDPOINTS[idx - 1][1]
+    except ValueError:
+        pass
+    print(f"  Invalid selection — using default: {KNOWN_ENDPOINTS[0][1]}")
+    return KNOWN_ENDPOINTS[0][1]
+
+
 def main() -> None:
     args = parse_args()
     client_id, client_secret, base_url = load_credentials()
@@ -641,6 +674,9 @@ def main() -> None:
     print()
     print(_CY + _B + "CrowdStrike Falcon — Microsoft Office Macro Removal Policy Check" + _R)
     print(_CY + "=" * 62 + _R)
+
+    if not os.environ.get("FALCON_BASE_URL") and not args.no_interactive:
+        base_url = select_base_url()
 
     print(f"\n{_B}[1/5]{_R} Authenticating...")
     token = get_token(base_url, client_id, client_secret)
@@ -690,10 +726,6 @@ def main() -> None:
             print(json.dumps(report, indent=2, default=str))
         else:
             print(render_summary(report, header=display_label))
-            if not args.no_interactive:
-                ans = input("\n  Show all policies? (yes/no) > ").strip().lower()
-                if ans in ("yes", "y"):
-                    print(render_plain(report, header=display_label))
 
     if not all_results:
         print(f"\n{_YE}No Windows prevention policies found across selected CIDs.{_R}")

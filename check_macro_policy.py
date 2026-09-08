@@ -11,6 +11,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 import time
 from typing import Optional
@@ -602,8 +603,8 @@ def prompt_disable(
         print("Cancelled — no changes made.")
         return
 
-    # Lazily obtained if a child policy turns out to be owned by the parent CID.
-    parent_token: Optional[str] = None
+    # Tokens for owner CIDs discovered at patch time, keyed by CID string.
+    retry_tokens: dict = {}
 
     print()
     for cid_key, policies in by_cid.items():
@@ -620,17 +621,21 @@ def prompt_disable(
             label = f'"{r["policy_name"]}"' + (f' [CID: {cid_key}]' if cid_key else "")
             use_token = cid_token
 
-            # The policy is owned by the parent CID; retry with a parent-scoped token.
+            # The policy is owned by a different CID. Extract that CID from the
+            # error and retry with a token scoped specifically to the owning CID.
             if not ok and "tried to edit parent CID" in (err or ""):
-                if parent_token is None:
-                    parent_token = get_token(base_url, client_id, client_secret)
-                ok, err = patch_policy_setting(
-                    base_url, parent_token,
-                    r["policy_id"], r["setting_id"],
-                    enable=False,
-                    debug=debug,
-                )
-                use_token = parent_token
+                m = re.search(r"tried to edit parent CID (\w+)", err)
+                owner_cid = m.group(1) if m else None
+                if owner_cid:
+                    if owner_cid not in retry_tokens:
+                        retry_tokens[owner_cid] = get_token(base_url, client_id, client_secret, member_cid=owner_cid)
+                    ok, err = patch_policy_setting(
+                        base_url, retry_tokens[owner_cid],
+                        r["policy_id"], r["setting_id"],
+                        enable=False,
+                        debug=debug,
+                    )
+                    use_token = retry_tokens[owner_cid]
 
             if ok:
                 new_state = verify_policy_setting(base_url, use_token, r["policy_id"], debug=debug)

@@ -1,0 +1,9 @@
+FALCON_CLIENT_ID=your_client_id_here
+FALCON_CLIENT_SECRET=your_client_secret_here
+
+## UNCOMMENT ONE LINE
+
+#FALCON_BASE_URL=https://api.crowdstrike.com
+#FALCON_BASE_URL=https://api.us-2.crowdstrike.com
+#FALCON_BASE_URL=https://api.eu-1.crowdstrike.com
+#FALCON_BASE_URL=https://api.laggar.gcw.crowdstrike.com

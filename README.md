@@ -110,7 +110,7 @@ following scopes:
 ### 2. Configure Credentials
 
 ```bash
-cp .env.example .env
+cp example_env .env
 ```
 
 Edit `.env` and fill in your values:

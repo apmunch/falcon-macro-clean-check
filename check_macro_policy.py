@@ -42,6 +42,23 @@ MACRO_SETTING_IDS = {
     "MicrosoftOfficeSuspiciousMacroRemoval",
 }
 
+# ── Terminal colours ──────────────────────────────────────────────────────────
+
+def _use_color() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    return hasattr(sys.stdout, "isatty") and sys.stdout.isatty()
+
+if _use_color():
+    _R  = "\033[0m"     # reset
+    _B  = "\033[1m"     # bold
+    _RE = "\033[1;31m"  # bold red   — errors / ENABLED (needs action)
+    _GR = "\033[1;32m"  # bold green — success / DISABLED (OK)
+    _YE = "\033[33m"    # yellow     — warnings / NOT FOUND
+    _CY = "\033[36m"    # cyan       — headers / dividers
+else:
+    _R = _B = _RE = _GR = _YE = _CY = ""
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 
 def parse_args() -> argparse.Namespace:
@@ -92,7 +109,7 @@ def load_credentials() -> tuple:
     ] if not val]
 
     if missing:
-        print(f"ERROR: Missing required environment variable(s): {', '.join(missing)}")
+        print(f"{_RE}ERROR:{_R} Missing required environment variable(s): {', '.join(missing)}")
         print("Set them in your shell or create a .env file next to this script.")
         sys.exit(1)
 
@@ -113,18 +130,18 @@ def _request(method: str, url: str, max_retries: int = 3, **kwargs) -> requests.
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
                 continue
-            print(f"ERROR: Network error: {exc}")
+            print(f"{_RE}ERROR:{_R} Network error: {exc}")
             sys.exit(1)
 
         if resp.status_code == 429:
             wait = 2 ** attempt
-            print(f"  Rate limited (429). Waiting {wait}s before retry {attempt + 1}/{max_retries}...")
+            print(f"  {_YE}Rate limited (429). Waiting {wait}s before retry {attempt + 1}/{max_retries}...{_R}")
             time.sleep(wait)
             continue
 
         return resp
 
-    print("ERROR: Request failed after maximum retries.")
+    print(f"{_RE}ERROR:{_R} Request failed after maximum retries.")
     sys.exit(1)
 
 # ── Authentication ─────────────────────────────────────────────────────────────
@@ -155,11 +172,11 @@ def get_token(
         msg = resp.text
 
     if resp.status_code == 401:
-        print(f"ERROR: Authentication failed. Verify FALCON_CLIENT_ID and FALCON_CLIENT_SECRET.\nDetails: {msg}")
+        print(f"{_RE}ERROR:{_R} Authentication failed. Verify FALCON_CLIENT_ID and FALCON_CLIENT_SECRET.\nDetails: {msg}")
     elif resp.status_code == 403:
-        print(f"ERROR: Access denied. Ensure the API client has the required scopes.\nDetails: {msg}")
+        print(f"{_RE}ERROR:{_R} Access denied. Ensure the API client has the required scopes.\nDetails: {msg}")
     else:
-        print(f"ERROR: Token request failed (HTTP {resp.status_code}): {msg}")
+        print(f"{_RE}ERROR:{_R} Token request failed (HTTP {resp.status_code}): {msg}")
 
     sys.exit(1)
 
@@ -204,9 +221,9 @@ def get_child_cids(base_url: str, token: str) -> list:
 
 def select_cids(child_cids: list) -> list:
     """Interactive CID selector. Returns list of CID strings; None = parent/direct."""
-    print("\n" + "=" * 62)
-    print("SELECT CIDs TO CHECK")
-    print("=" * 62)
+    print("\n" + _CY + "=" * 62 + _R)
+    print(_B + "SELECT CIDs TO CHECK" + _R)
+    print(_CY + "=" * 62 + _R)
     print(f"  [  0]  Parent / Direct CID")
     for i, cid in enumerate(child_cids, 1):
         print(f"  [{i:>3}]  {cid['name']:<42} {cid['id']}")
@@ -235,8 +252,9 @@ def select_cids(child_cids: list) -> list:
 
 # ── Policy fetch ──────────────────────────────────────────────────────────────
 
-def fetch_windows_policies(base_url: str, token: str) -> list:
-    """Fetch all Windows prevention policies with automatic pagination."""
+def fetch_windows_policies(base_url: str, token: str) -> Optional[list]:
+    """Fetch all Windows prevention policies with automatic pagination.
+    Returns None if access is denied (403) so the caller can skip gracefully."""
     headers = {"Authorization": f"Bearer {token}"}
     all_policies: list = []
     offset = 0
@@ -258,13 +276,15 @@ def fetch_windows_policies(base_url: str, token: str) -> list:
                 msg = _extract_errors(resp.json()) or resp.text
             except Exception:
                 msg = resp.text
-            print(f"ERROR: Failed to fetch policies (HTTP {resp.status_code}): {msg}")
+            if resp.status_code == 403:
+                return None
+            print(f"{_RE}ERROR:{_R} Failed to fetch policies (HTTP {resp.status_code}): {msg}")
             sys.exit(1)
 
         body = resp.json()
         errs = _extract_errors(body)
         if errs:
-            print(f"ERROR: API error in policy response: {errs}")
+            print(f"{_RE}ERROR:{_R} API error in policy response: {errs}")
             sys.exit(1)
 
         resources: list = body.get("resources") or []
@@ -322,34 +342,49 @@ def _count_states(report: list) -> tuple:
 def render_summary(report: list, header: str = "") -> str:
     """One-line-per-count summary — shown by default."""
     en, dis, nf = _count_states(report)
-    lines = ["\n" + "=" * 62, header or "Current CID", "=" * 62]
-    lines.append(f"  Total policies          : {len(report)}")
-    lines.append(f"  Needs disabling         : {en}  (macro removal ENABLED)")
-    lines.append(f"  OK (already disabled)   : {dis}")
-    lines.append(f"  Setting not found       : {nf}  (policy predates this control — no action needed)")
+    lines = [
+        "\n" + _CY + "=" * 62 + _R,
+        _B + (header or "Current CID") + _R,
+        _CY + "=" * 62 + _R,
+    ]
+    lines.append(f"  Total policies          : {_B}{len(report)}{_R}")
+    en_str  = f"{_RE}{en}{_R}"  if en  else str(en)
+    dis_str = f"{_GR}{dis}{_R}" if dis else str(dis)
+    nf_str  = f"{_YE}{nf}{_R}"  if nf  else str(nf)
+    lines.append(f"  Needs disabling         : {en_str}  (macro removal ENABLED)")
+    lines.append(f"  OK (already disabled)   : {dis_str}")
+    lines.append(f"  Setting not found       : {nf_str}  (policy predates this control — no action needed)")
     return "\n".join(lines)
 
 
 def render_plain(report: list, header: str = "") -> str:
     """Full per-policy listing."""
-    lines = ["\n" + "=" * 62, header or "Current CID", "=" * 62]
+    lines = [
+        "\n" + _CY + "=" * 62 + _R,
+        _B + (header or "Current CID") + _R,
+        _CY + "=" * 62 + _R,
+    ]
     lines.append(f"Windows prevention polic{'y' if len(report) == 1 else 'ies'} found: {len(report)}\n")
 
     for r in report:
         p_status = "ENABLED" if r["policy_enabled"] else "DISABLED"
-        lines.append(f'  Policy : "{r["policy_name"]}"')
-        lines.append(f'  ID     : {r["policy_id"]}  |  Policy: {p_status}')
+        p_color  = _YE if r["policy_enabled"] else _GR
+        lines.append(f'  Policy : {_B}"{r["policy_name"]}"{_R}')
+        lines.append(f'  ID     : {r["policy_id"]}  |  Policy: {p_color}{p_status}{_R}')
 
         if r["macro_removal_enabled"] is True:
-            lines.append(f'  Macro Removal ({r["setting_id"]}): ENABLED  <-- NEEDS DISABLING')
+            lines.append(f'  Macro Removal ({r["setting_id"]}): {_RE}ENABLED  <-- NEEDS DISABLING{_R}')
         elif r["macro_removal_enabled"] is False:
-            lines.append(f'  Macro Removal ({r["setting_id"]}): DISABLED (OK)')
+            lines.append(f'  Macro Removal ({r["setting_id"]}): {_GR}DISABLED (OK){_R}')
         else:
-            lines.append( '  Macro Removal: NOT FOUND (policy predates this control — no action needed)')
+            lines.append(f'  Macro Removal: {_YE}NOT FOUND{_R} (policy predates this control — no action needed)')
         lines.append("")
 
     en, dis, nf = _count_states(report)
-    lines.append(f"  Summary: {en} ENABLED (needs disabling) | {dis} DISABLED (OK) | {nf} NOT FOUND")
+    en_s  = f"{_RE}{en} ENABLED (needs disabling){_R}"   if en  else f"{en} ENABLED (needs disabling)"
+    dis_s = f"{_GR}{dis} DISABLED (OK){_R}"              if dis else f"{dis} DISABLED (OK)"
+    nf_s  = f"{_YE}{nf} NOT FOUND{_R}"                   if nf  else f"{nf} NOT FOUND"
+    lines.append(f"  Summary: {en_s} | {dis_s} | {nf_s}")
     return "\n".join(lines)
 
 # ── CSV export ─────────────────────────────────────────────────────────────────
@@ -363,7 +398,7 @@ def export_csv(results: list, path: str) -> None:
         writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
-    print(f"\nResults written to: {path}")
+    print(f"\n{_GR}Results written to: {path}{_R}")
 
 # ── Policy update ──────────────────────────────────────────────────────────────
 
@@ -501,13 +536,13 @@ def prompt_disable(
     ]
 
     if not enabled_policies:
-        print("\nNo policies have macro removal ENABLED. Nothing to disable.")
+        print(f"\n{_GR}No policies have macro removal ENABLED. Nothing to disable.{_R}")
         return
 
-    print("\n" + "=" * 62)
-    print("DISABLE MACRO REMOVAL")
-    print(f"  {len(enabled_policies)} polic{'y' if len(enabled_policies) == 1 else 'ies'} currently have the setting ENABLED:")
-    print("=" * 62)
+    print("\n" + _CY + "=" * 62 + _R)
+    print(_B + "DISABLE MACRO REMOVAL" + _R)
+    print(f"  {len(enabled_policies)} polic{'y' if len(enabled_policies) == 1 else 'ies'} currently have the setting {_RE}ENABLED{_R}:")
+    print(_CY + "=" * 62 + _R)
     for i, r in enumerate(enabled_policies, 1):
         cid_info = f"  CID: {r['cid']}" if r["cid"] else ""
         print(f"  [{i:>3}]  \"{r['policy_name']}\" [{r['policy_id']}]{cid_info}")
@@ -539,8 +574,8 @@ def prompt_disable(
         return
 
     print(
-        f"\nAbout to DISABLE macro removal on "
-        f"{len(selected)} polic{'y' if len(selected) == 1 else 'ies'}."
+        f"\n{_YE}About to DISABLE macro removal on "
+        f"{len(selected)} polic{'y' if len(selected) == 1 else 'ies'}.{_R}"
     )
     confirm = input("  Type 'yes' or 'y' to confirm, anything else to cancel: ").strip().lower()
     if confirm not in ("yes", "y"):
@@ -568,15 +603,15 @@ def prompt_disable(
             if ok:
                 new_state = verify_policy_setting(base_url, cid_token, r["policy_id"], debug=debug)
                 if new_state is False:
-                    print(f"  DISABLED (verified): {label}")
+                    print(f"  {_GR}DISABLED (verified):{_R} {label}")
                 elif new_state is True:
-                    print(f"  WARNING — API accepted the change but setting still reads ENABLED: {label}")
+                    print(f"  {_YE}WARNING — API accepted the change but setting still reads ENABLED:{_R} {label}")
                     print(f"            This may be a brief propagation delay; re-run in a few seconds to confirm.")
                     print(f"            If it persists, verify the API client has Prevention Policies: Write scope.")
                 else:
-                    print(f"  PATCHED (could not re-verify): {label}")
+                    print(f"  {_YE}PATCHED (could not re-verify):{_R} {label}")
             else:
-                print(f"  FAILED: {label} — {err}")
+                print(f"  {_RE}FAILED:{_R} {label} — {err}")
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
@@ -585,21 +620,21 @@ def main() -> None:
     client_id, client_secret, base_url = load_credentials()
 
     print()
-    print("CrowdStrike Falcon — Microsoft Office Macro Removal Policy Check")
-    print("=" * 62)
+    print(_CY + _B + "CrowdStrike Falcon — Microsoft Office Macro Removal Policy Check" + _R)
+    print(_CY + "=" * 62 + _R)
 
-    print("\n[1/5] Authenticating...")
+    print(f"\n{_B}[1/5]{_R} Authenticating...")
     token = get_token(base_url, client_id, client_secret)
-    print("      OK")
+    print(f"      {_GR}OK{_R}")
 
-    print("\n[2/5] Checking for Flight Control child CIDs...")
+    print(f"\n{_B}[2/5]{_R} Checking for Flight Control child CIDs...")
     child_cids = get_child_cids(base_url, token)
 
     if child_cids:
-        print(f"      Found {len(child_cids)} child CID(s).")
+        print(f"      Found {_B}{len(child_cids)}{_R} child CID(s).")
         if args.no_interactive:
             selected_cids = [None] + [c["id"] for c in child_cids]
-            print(f"      Non-interactive: processing all {len(selected_cids)} CID(s).")
+            print(f"      Non-interactive: processing all {_B}{len(selected_cids)}{_R} CID(s).")
         else:
             selected_cids = select_cids(child_cids)
     else:
@@ -607,7 +642,7 @@ def main() -> None:
         print("      Operating on the current CID only.")
         selected_cids = [None]
 
-    print(f"\n[3/5] Enumerating Windows prevention policies across {len(selected_cids)} CID(s)...")
+    print(f"\n{_B}[3/5]{_R} Enumerating Windows prevention policies across {_B}{len(selected_cids)}{_R} CID(s)...")
 
     all_results: list = []
 
@@ -621,6 +656,9 @@ def main() -> None:
 
         print(f"  Fetching policies for {display_label}...", end=" ", flush=True)
         policies = fetch_windows_policies(base_url, cid_token)
+        if policies is None:
+            print(f"\n  {_YE}Skipped — access denied (403). Ensure the API client has the Prevention Policies: Read scope.{_R}")
+            continue
         print(f"found {len(policies)} polic{'y' if len(policies) == 1 else 'ies'}.")
 
         if not policies:
@@ -639,10 +677,10 @@ def main() -> None:
                     print(render_plain(report, header=display_label))
 
     if not all_results:
-        print("\nNo Windows prevention policies found across selected CIDs.")
+        print(f"\n{_YE}No Windows prevention policies found across selected CIDs.{_R}")
         sys.exit(0)
 
-    print("\n[4/5] Export results to CSV")
+    print(f"\n{_B}[4/5]{_R} Export results to CSV")
 
     if args.csv:
         export_csv(all_results, args.csv)
@@ -652,7 +690,7 @@ def main() -> None:
         if csv_path:
             export_csv(all_results, csv_path)
 
-    print("\n[5/5] Disable macro removal on flagged policies")
+    print(f"\n{_B}[5/5]{_R} Disable macro removal on flagged policies")
 
     if not args.no_interactive:
         prompt_disable(all_results, base_url, client_id, client_secret, debug=args.debug)
@@ -660,16 +698,16 @@ def main() -> None:
         en, dis, nf = _count_states(all_results)
         if en:
             print(
-                f"\n  {en} polic{'y' if en == 1 else 'ies'} ENABLED (macro removal active) — "
+                f"\n  {_RE}{en} polic{'y' if en == 1 else 'ies'} ENABLED (macro removal active){_R} — "
                 f"run interactively to disable."
             )
         if dis or nf:
             print(
-                f"  {dis} polic{'y' if dis == 1 else 'ies'} already disabled, "
-                f"{nf} NOT FOUND (no action needed)."
+                f"  {_GR}{dis} polic{'y' if dis == 1 else 'ies'} already disabled{_R}, "
+                f"{_YE}{nf} NOT FOUND{_R} (no action needed)."
             )
 
-    print("\nDone.\n")
+    print(f"\n{_GR}Done.{_R}\n")
 
 
 if __name__ == "__main__":

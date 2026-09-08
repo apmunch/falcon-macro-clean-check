@@ -589,6 +589,9 @@ def prompt_disable(
     for r in selected:
         by_cid.setdefault(r.get("cid") or "", []).append(r)
 
+    # Lazily obtained if a child policy turns out to be owned by the parent CID.
+    parent_token: Optional[str] = None
+
     print()
     for cid_key, policies in by_cid.items():
         member_cid = cid_key if cid_key else None
@@ -602,8 +605,22 @@ def prompt_disable(
                 debug=debug,
             )
             label = f'"{r["policy_name"]}"' + (f' [CID: {cid_key}]' if cid_key else "")
+            use_token = cid_token
+
+            # The policy is owned by the parent CID; retry with a parent-scoped token.
+            if not ok and "tried to edit parent CID" in (err or ""):
+                if parent_token is None:
+                    parent_token = get_token(base_url, client_id, client_secret)
+                ok, err = patch_policy_setting(
+                    base_url, parent_token,
+                    r["policy_id"], r["setting_id"],
+                    enable=False,
+                    debug=debug,
+                )
+                use_token = parent_token
+
             if ok:
-                new_state = verify_policy_setting(base_url, cid_token, r["policy_id"], debug=debug)
+                new_state = verify_policy_setting(base_url, use_token, r["policy_id"], debug=debug)
                 if new_state is False:
                     print(f"  {_GR}DISABLED (verified):{_R} {label}")
                 elif new_state is True:

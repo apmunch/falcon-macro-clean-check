@@ -110,6 +110,8 @@ following scopes:
 ### 2. Configure Credentials
 
 ```bash
+git clone https://github.com/apmunch/falcon-macro-clean-check
+cd falcon-macro-clean-check
 cp example_env .env
 ```
 
@@ -118,7 +120,6 @@ Edit `.env` and fill in your values:
 ```dotenv
 FALCON_CLIENT_ID=abc123...
 FALCON_CLIENT_SECRET=xyz789...
-# FALCON_BASE_URL=https://api.crowdstrike.com  # optional — set to skip the interactive region prompt
 ```
 
 The script loads `.env` automatically if `python-dotenv` is installed.
